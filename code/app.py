@@ -1,101 +1,166 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
+import matplotlib.pyplot as plt
+import io
+import numpy as np
+from scipy import stats
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-from scipy import stats
-import os
 
-st.set_page_config(page_title="Data Analyst Toolkit", layout="wide")
+st.set_page_config(page_title="Smart Data Analyst Toolkit", layout="wide")
 
-# Inject custom CSS
-css_path = os.path.join(os.path.dirname(__file__), "style.css")
-if os.path.exists(css_path):
-    with open(css_path) as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+st.title("📊 Smart Data Analyst Toolkit")
+st.markdown("Upload a CSV file and get instant insights, colorful charts, smart recommendations, and statistical analysis.")
 
-st.title("📊 Data Analyst Toolkit")
-st.markdown("Upload your dataset (CSV) and start analyzing it with no code required!")
+uploaded_file = st.file_uploader("📂 Upload CSV File", type="csv")
 
-# File uploader
-file = st.file_uploader("Upload CSV", type=["csv"])
+if uploaded_file:
+    try:
+        df = pd.read_csv(uploaded_file)
+    except Exception as e:
+        st.error(f"Error reading the file: {e}")
+        st.stop()
 
-if file:
-    df = pd.read_csv(file)
-    st.success("✅ File uploaded successfully!")
+    st.success("✅ File uploaded and read successfully.")
+    st.subheader("🔍 Preview of Your Data")
     st.dataframe(df.head())
 
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
 
-    # Sidebar Options
-    st.sidebar.header("Select Analysis")
-    analysis_type = st.sidebar.radio("What would you like to do?", [
-        "Summary Stats", "Correlation Matrix", "Data Visualization", "Linear Regression"])
+    st.sidebar.header("Choose Your Analysis")
+    analysis_type = st.sidebar.selectbox("Select Analysis Type", [
+        "Exploratory Data Analysis",
+        "Compare Means",
+        "Association Between Categories",
+        "Correlation",
+        "Regression",
+        "Check Normality",
+        "Compare Variances"
+    ])
 
-    # --- Summary Stats ---
-    if analysis_type == "Summary Stats":
-        st.subheader("📈 Summary Statistics")
-        st.write(df.describe(include='all'))
+    # --- EDA & Business Intelligence ---
+    if analysis_type == "Exploratory Data Analysis":
+        st.subheader("📈 Exploratory Data Analysis")
+        st.write("Summary statistics and smart suggestions")
 
-    # --- Correlation Matrix ---
-    elif analysis_type == "Correlation Matrix":
-        st.subheader("🔗 Correlation Matrix (Pearson)")
-        if numeric_cols:
-            corr = df[numeric_cols].corr()
-            st.dataframe(corr)
-            fig, ax = plt.subplots()
-            sns.heatmap(corr, annot=True, cmap="coolwarm", ax=ax)
-            st.pyplot(fig)
+        st.markdown("### 📌 Summary")
+        st.write(df.describe(include='all').transpose())
+
+        st.markdown("### 🧠 Smart Insights")
+        if df.isnull().sum().sum() > 0:
+            st.warning("⚠️ Your dataset has missing values. Consider cleaning or imputing them.")
         else:
-            st.warning("No numeric columns found for correlation.")
+            st.info("✅ No missing values detected.")
 
-    # --- Visualization ---
-    elif analysis_type == "Data Visualization":
-        st.subheader("📊 Data Visualization")
-        chart_type = st.selectbox("Select chart type", ["Histogram", "Box Plot", "Bar Chart", "Scatter Plot"])
-        
-        if chart_type == "Histogram":
-            col = st.selectbox("Select numeric column", numeric_cols)
-            if col:
-                fig, ax = plt.subplots()
-                sns.histplot(df[col].dropna(), kde=True, ax=ax)
-                st.pyplot(fig)
+        st.markdown("### 🎨 Visualizations")
 
-        elif chart_type == "Box Plot":
-            y = st.selectbox("Y-axis (numeric)", numeric_cols)
-            x = st.selectbox("X-axis (categorical)", categorical_cols)
-            if x and y:
-                fig, ax = plt.subplots()
-                sns.boxplot(x=df[x], y=df[y], ax=ax)
-                st.pyplot(fig)
+        for col in numeric_cols:
+            fig, ax = plt.subplots()
+            sns.histplot(df[col].dropna(), kde=True, color='skyblue', ax=ax)
+            ax.set_title(f"Distribution of {col}")
+            st.pyplot(fig)
 
-        elif chart_type == "Bar Chart":
-            col = st.selectbox("Select categorical column", categorical_cols)
-            if col:
-                fig, ax = plt.subplots()
-                df[col].value_counts().plot(kind='bar', ax=ax)
-                st.pyplot(fig)
+        for col in categorical_cols:
+            fig, ax = plt.subplots()
+            sns.countplot(y=col, data=df, palette='Set3', order=df[col].value_counts().index, ax=ax)
+            ax.set_title(f"Frequency of {col}")
+            st.pyplot(fig)
 
-        elif chart_type == "Scatter Plot":
-            x = st.selectbox("X-axis", numeric_cols, key="scatter_x")
-            y = st.selectbox("Y-axis", [col for col in numeric_cols if col != x], key="scatter_y")
-            if x and y:
-                fig, ax = plt.subplots()
-                sns.scatterplot(x=df[x], y=df[y], ax=ax)
-                st.pyplot(fig)
+        st.markdown("### 💡 Recommendations")
+        if len(numeric_cols) >= 2:
+            st.write("You can explore relationships between numeric variables using correlation or regression.")
+        if len(categorical_cols) >= 2:
+            st.write("Consider Chi-square test for association between categorical variables.")
 
-    # --- Regression ---
-    elif analysis_type == "Linear Regression":
-        st.subheader("📉 Linear Regression")
-        y = st.selectbox("Dependent variable (Y)", numeric_cols, key="reg_y")
-        x = st.selectbox("Independent variable (X)", [col for col in numeric_cols if col != y], key="reg_x")
+    elif analysis_type == "Compare Means":
+        st.subheader("🧪 Compare Means")
+        target = st.sidebar.selectbox("Choose numeric variable", numeric_cols)
+        group = st.sidebar.selectbox("Group by", categorical_cols)
+
+        if target and group:
+            unique_groups = df[group].dropna().unique()
+            if len(unique_groups) == 2:
+                st.info("Recommended test: Independent t-test")
+                group1, group2 = unique_groups
+                t_stat, p_val = stats.ttest_ind(
+                    df[df[group] == group1][target],
+                    df[df[group] == group2][target],
+                    nan_policy='omit'
+                )
+                st.write(f"**t-statistic**: {t_stat:.3f}, **p-value**: {p_val:.3f}")
+            elif len(unique_groups) > 2:
+                st.info("Recommended test: One-way ANOVA")
+                model = smf.ols(f'{target} ~ C({group})', data=df).fit()
+                anova_table = sm.stats.anova_lm(model, typ=2)
+                st.write(anova_table)
+
+            fig, ax = plt.subplots()
+            sns.boxplot(x=group, y=target, data=df, palette="pastel", ax=ax)
+            st.pyplot(fig)
+
+    elif analysis_type == "Association Between Categories":
+        st.subheader("🧩 Chi-square Test")
+        cat1 = st.sidebar.selectbox("First categorical variable", categorical_cols)
+        cat2 = st.sidebar.selectbox("Second categorical variable", [c for c in categorical_cols if c != cat1])
+
+        if cat1 and cat2:
+            contingency = pd.crosstab(df[cat1], df[cat2])
+            st.write("Contingency Table")
+            st.write(contingency)
+            chi2, p, dof, _ = stats.chi2_contingency(contingency)
+            st.write(f"**Chi-square statistic**: {chi2:.3f}, **p-value**: {p:.3f}")
+
+    elif analysis_type == "Correlation":
+        st.subheader("📉 Correlation")
+        x = st.sidebar.selectbox("Variable 1", numeric_cols)
+        y = st.sidebar.selectbox("Variable 2", [col for col in numeric_cols if col != x])
+
+        if x and y:
+            r, p = stats.pearsonr(df[x], df[y])
+            st.write(f"**Pearson correlation coefficient**: {r:.3f}, **p-value**: {p:.3f}")
+            fig, ax = plt.subplots()
+            sns.scatterplot(x=x, y=y, data=df, hue=df[categorical_cols[0]] if categorical_cols else None, ax=ax)
+            st.pyplot(fig)
+
+    elif analysis_type == "Regression":
+        st.subheader("📈 Linear Regression")
+        y = st.sidebar.selectbox("Dependent Variable", numeric_cols)
+        x = st.sidebar.selectbox("Independent Variable", [col for col in numeric_cols if col != y])
+
         if x and y:
             model = smf.ols(f'{y} ~ {x}', data=df).fit()
-            st.text(model.summary())
+            st.write(model.summary())
             fig, ax = plt.subplots()
-            sns.regplot(x=df[x], y=df[y], ax=ax)
+            sns.regplot(x=x, y=y, data=df, color="tomato", ax=ax)
             st.pyplot(fig)
+
+    elif analysis_type == "Check Normality":
+        st.subheader("📊 Normality Check (Shapiro-Wilk Test)")
+        col = st.sidebar.selectbox("Numeric Column", numeric_cols)
+        if col:
+            stat, p = stats.shapiro(df[col].dropna())
+            st.write(f"**W-statistic**: {stat:.3f}, **p-value**: {p:.3f}")
+            fig, ax = plt.subplots()
+            sns.histplot(df[col].dropna(), kde=True, ax=ax)
+            st.pyplot(fig)
+
+    elif analysis_type == "Compare Variances":
+        st.subheader("📏 Compare Variances (Levene's Test)")
+        target = st.sidebar.selectbox("Numeric Variable", numeric_cols)
+        group = st.sidebar.selectbox("Group by", categorical_cols)
+
+        if target and group:
+            unique_groups = df[group].dropna().unique()
+            if len(unique_groups) == 2:
+                g1 = df[df[group] == unique_groups[0]][target].dropna()
+                g2 = df[df[group] == unique_groups[1]][target].dropna()
+                stat, p = stats.levene(g1, g2)
+                st.write(f"**Levene's statistic**: {stat:.3f}, **p-value**: {p:.3f}")
+                fig, ax = plt.subplots()
+                sns.boxplot(x=group, y=target, data=df, ax=ax)
+                st.pyplot(fig)
+
 else:
-    st.info("Upload a CSV file to begin.")
+    st.info("👆 Please upload a CSV file to begin analysis.")
