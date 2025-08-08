@@ -6,20 +6,33 @@ import numpy as np
 from scipy import stats
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
+import io
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
 
 # ----------------- Streamlit Page Config -----------------
 st.set_page_config(page_title="Smart Data Analyst Toolkit", layout="wide")
 sns.set_theme(style="whitegrid")
 
-st.title("📊 Smart Data Analyst Toolkit")
-st.markdown("Upload a CSV file and get **instant insights**, **colorful charts**, and **smart statistical recommendations**.")
+st.title("📊 Smart Data Analyst Toolkit + PDF Report")
+st.markdown("Upload a CSV file to get **instant insights**, **colorful charts**, and a downloadable **PDF report**.")
 
-# ----------------- File Upload & Cache -----------------
+# ----------------- File Upload -----------------
 @st.cache_data
 def load_csv(file):
     return pd.read_csv(file)
 
 uploaded_file = st.file_uploader("📂 Upload CSV File", type="csv")
+
+def save_plot(fig):
+    """Save Matplotlib figure to BytesIO object."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    plt.close(fig)
+    return buf
 
 if uploaded_file:
     try:
@@ -29,179 +42,91 @@ if uploaded_file:
         st.stop()
 
     st.success("✅ File uploaded successfully.")
-    st.subheader("🔍 Preview of Your Data")
+    st.subheader("🔍 Data Preview")
     st.dataframe(df.head())
 
-    # Identify column types
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
 
-    # Handle no numeric or categorical data edge case
-    if not numeric_cols:
-        st.warning("⚠️ No numeric columns detected. Some analyses will be unavailable.")
-    if not categorical_cols:
-        st.warning("⚠️ No categorical columns detected. Some analyses will be unavailable.")
+    pdf_buffer = io.BytesIO()
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    elements = []
 
-    # Sidebar
-    st.sidebar.header("Choose Your Analysis")
-    analysis_type = st.sidebar.selectbox(
-        "Select Analysis Type",
-        [
-            "Exploratory Data Analysis",
-            "Compare Means" if numeric_cols and categorical_cols else None,
-            "Association Between Categories" if len(categorical_cols) >= 2 else None,
-            "Correlation" if len(numeric_cols) >= 2 else None,
-            "Regression" if len(numeric_cols) >= 2 else None,
-            "Check Normality" if numeric_cols else None,
-            "Compare Variances" if numeric_cols and categorical_cols else None
-        ]
-    )
+    # Title
+    elements.append(Paragraph("Smart Data Analyst Toolkit Report", styles['Title']))
+    elements.append(Spacer(1, 12))
 
     # ----------------- EDA -----------------
-    if analysis_type == "Exploratory Data Analysis":
-        st.subheader("📈 Exploratory Data Analysis")
-        st.write("Summary statistics and smart suggestions.")
+    elements.append(Paragraph("Exploratory Data Analysis", styles['Heading2']))
+    summary = df.describe(include='all').transpose().fillna("").astype(str).reset_index()
+    st.subheader("📌 Summary Statistics")
+    st.write(summary)
+    table_data = [summary.columns.tolist()] + summary.values.tolist()
+    elements.append(Table(table_data, repeatRows=1))
 
-        st.markdown("### 📌 Summary")
-        st.write(df.describe(include='all').transpose())
+    if df.isnull().sum().sum() > 0:
+        msg = "⚠️ Dataset has missing values. Consider imputing them."
+        st.warning(msg)
+        elements.append(Paragraph(msg, styles['Normal']))
+    else:
+        msg = "✅ No missing values detected."
+        st.info(msg)
+        elements.append(Paragraph(msg, styles['Normal']))
 
-        st.markdown("### 🧠 Smart Insights")
-        if df.isnull().sum().sum() > 0:
-            st.warning("⚠️ Your dataset has missing values. Consider cleaning or imputing them.")
-        else:
-            st.info("✅ No missing values detected.")
-
-        if len(df) < 50:
-            st.info("ℹ️ Dataset is small — be careful with statistical assumptions.")
-
-        st.markdown("### 🎨 Visualizations")
-        with st.expander("Numeric Distributions"):
-            for col in numeric_cols:
-                fig, ax = plt.subplots()
-                sns.histplot(df[col].dropna(), kde=True, palette="husl", ax=ax)
-                ax.set_title(f"Distribution of {col}")
-                st.pyplot(fig)
-
-        with st.expander("Categorical Distributions"):
-            for col in categorical_cols:
-                fig, ax = plt.subplots()
-                sns.countplot(y=col, data=df, palette="Set3", order=df[col].value_counts().index, ax=ax)
-                ax.set_title(f"Frequency of {col}")
-                st.pyplot(fig)
-
-        st.markdown("### 💡 Recommendations")
-        if len(numeric_cols) >= 2:
-            st.write("🔹 Explore correlations between numeric variables.")
-        if len(categorical_cols) >= 2:
-            st.write("🔹 Use Chi-square test to check relationships between categories.")
-
-    # ----------------- Compare Means -----------------
-    elif analysis_type == "Compare Means":
-        st.subheader("🧪 Compare Means")
-        target = st.sidebar.selectbox("Choose numeric variable", numeric_cols)
-        group = st.sidebar.selectbox("Group by", categorical_cols)
-
-        if target and group:
-            unique_groups = df[group].dropna().unique()
-            if len(unique_groups) == 2:
-                st.info("Recommended test: Independent t-test")
-                group1, group2 = unique_groups
-                t_stat, p_val = stats.ttest_ind(
-                    df[df[group] == group1][target],
-                    df[df[group] == group2][target],
-                    nan_policy='omit'
-                )
-                st.write(f"**t-statistic**: {t_stat:.3f}, **p-value**: {p_val:.3f}")
-            elif len(unique_groups) > 2:
-                st.info("Recommended test: One-way ANOVA")
-                model = smf.ols(f'{target} ~ C({group})', data=df).fit()
-                anova_table = sm.stats.anova_lm(model, typ=2)
-                st.write(anova_table)
-
+    # Numeric plots
+    if numeric_cols:
+        elements.append(Paragraph("Numeric Distributions", styles['Heading3']))
+        for col in numeric_cols:
             fig, ax = plt.subplots()
-            sns.boxplot(x=group, y=target, data=df, palette="pastel", ax=ax)
+            sns.histplot(df[col].dropna(), kde=True, color='skyblue', ax=ax)
+            ax.set_title(f"Distribution of {col}")
             st.pyplot(fig)
+            elements.append(Image(save_plot(fig), width=400, height=300))
 
-    # ----------------- Association Between Categories -----------------
-    elif analysis_type == "Association Between Categories":
-        st.subheader("🧩 Chi-square Test")
-        cat1 = st.sidebar.selectbox("First categorical variable", categorical_cols)
-        cat2 = st.sidebar.selectbox("Second categorical variable", [c for c in categorical_cols if c != cat1])
-
-        if cat1 and cat2:
-            contingency = pd.crosstab(df[cat1], df[cat2])
-            st.write("Contingency Table")
-            st.write(contingency)
-            chi2, p, dof, _ = stats.chi2_contingency(contingency)
-            st.write(f"**Chi-square statistic**: {chi2:.3f}, **p-value**: {p:.3f}")
-            if p < 0.05:
-                st.success("✅ Significant association detected.")
-            else:
-                st.info("ℹ️ No significant association detected.")
+    # Categorical plots
+    if categorical_cols:
+        elements.append(Paragraph("Categorical Distributions", styles['Heading3']))
+        for col in categorical_cols:
+            fig, ax = plt.subplots()
+            sns.countplot(y=col, data=df, palette='Set3', order=df[col].value_counts().index, ax=ax)
+            ax.set_title(f"Frequency of {col}")
+            st.pyplot(fig)
+            elements.append(Image(save_plot(fig), width=400, height=300))
 
     # ----------------- Correlation -----------------
-    elif analysis_type == "Correlation":
-        st.subheader("📉 Correlation")
-        x = st.sidebar.selectbox("Variable 1", numeric_cols)
-        y = st.sidebar.selectbox("Variable 2", [col for col in numeric_cols if col != x])
+    if len(numeric_cols) >= 2:
+        elements.append(Paragraph("Correlation Analysis", styles['Heading2']))
+        corr = df[numeric_cols].corr()
+        st.subheader("📉 Correlation Matrix")
+        st.write(corr)
+        table_data = [corr.columns.tolist()] + corr.round(3).values.tolist()
+        elements.append(Table(table_data, repeatRows=1))
 
-        if x and y:
-            r, p = stats.pearsonr(df[x], df[y])
-            st.write(f"**Pearson correlation coefficient**: {r:.3f}, **p-value**: {p:.3f}")
-            if abs(r) > 0.7:
-                st.success("Strong correlation detected — possible predictive relationship.")
-            fig, ax = plt.subplots()
-            sns.scatterplot(x=x, y=y, data=df, hue=df[categorical_cols[0]] if categorical_cols else None, palette="coolwarm", ax=ax)
-            st.pyplot(fig)
+        fig, ax = plt.subplots()
+        sns.heatmap(corr, annot=True, cmap='coolwarm', ax=ax)
+        ax.set_title("Correlation Heatmap")
+        st.pyplot(fig)
+        elements.append(Image(save_plot(fig), width=400, height=300))
 
-    # ----------------- Regression -----------------
-    elif analysis_type == "Regression":
-        st.subheader("📈 Linear Regression")
-        y = st.sidebar.selectbox("Dependent Variable", numeric_cols)
-        x = st.sidebar.selectbox("Independent Variable", [col for col in numeric_cols if col != y])
-
-        if x and y:
-            model = smf.ols(f'{y} ~ {x}', data=df).fit()
-            st.write(model.summary())
-            fig, ax = plt.subplots()
-            sns.regplot(x=x, y=y, data=df, color="tomato", ax=ax)
-            st.pyplot(fig)
-
-    # ----------------- Normality Check -----------------
-    elif analysis_type == "Check Normality":
-        st.subheader("📊 Normality Check (Shapiro-Wilk Test)")
-        col = st.sidebar.selectbox("Numeric Column", numeric_cols)
-        if col:
+    # ----------------- Normality Test -----------------
+    if numeric_cols:
+        elements.append(Paragraph("Normality Tests", styles['Heading2']))
+        for col in numeric_cols:
             stat, p = stats.shapiro(df[col].dropna())
-            st.write(f"**W-statistic**: {stat:.3f}, **p-value**: {p:.3f}")
-            if p < 0.05:
-                st.warning("Data is not normally distributed — consider non-parametric tests.")
-            else:
-                st.success("Data is normally distributed.")
-            fig, ax = plt.subplots()
-            sns.histplot(df[col].dropna(), kde=True, palette="husl", ax=ax)
-            st.pyplot(fig)
+            msg = f"{col}: W-stat={stat:.3f}, p-value={p:.3f}"
+            st.write(msg)
+            elements.append(Paragraph(msg, styles['Normal']))
 
-    # ----------------- Compare Variances -----------------
-    elif analysis_type == "Compare Variances":
-        st.subheader("📏 Compare Variances (Levene's Test)")
-        target = st.sidebar.selectbox("Numeric Variable", numeric_cols)
-        group = st.sidebar.selectbox("Group by", categorical_cols)
-
-        if target and group:
-            unique_groups = df[group].dropna().unique()
-            if len(unique_groups) == 2:
-                g1 = df[df[group] == unique_groups[0]][target].dropna()
-                g2 = df[df[group] == unique_groups[1]][target].dropna()
-                stat, p = stats.levene(g1, g2)
-                st.write(f"**Levene's statistic**: {stat:.3f}, **p-value**: {p:.3f}")
-                if p < 0.05:
-                    st.warning("Variances are significantly different.")
-                else:
-                    st.success("Variances are similar.")
-                fig, ax = plt.subplots()
-                sns.boxplot(x=group, y=target, data=df, palette="pastel", ax=ax)
-                st.pyplot(fig)
+    # ----------------- PDF Download -----------------
+    doc.build(elements)
+    pdf_buffer.seek(0)
+    st.download_button(
+        label="📥 Download PDF Report",
+        data=pdf_buffer,
+        file_name="data_analysis_report.pdf",
+        mime="application/pdf"
+    )
 
 else:
     st.info("👆 Please upload a CSV file to begin analysis.")
