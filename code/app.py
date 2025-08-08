@@ -1,127 +1,127 @@
-# app.py
 import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 from scipy import stats
 from sklearn.linear_model import LinearRegression
-from fpdf import FPDF
 import io
+from fpdf import FPDF
+import tempfile
+import os
 
-st.set_page_config(page_title="Data Analysis App", layout="wide")
+st.set_page_config(page_title="Universal Data Analysis Tool", layout="wide")
+st.title("📊 Universal Data Analysis & PDF Report Generator")
 
-# ------------------ PDF Helper ------------------
-class PDF(FPDF):
-    def header(self):
-        self.set_font('Arial', 'B', 14)
-        self.cell(0, 10, 'Data Analysis Report', 0, 1, 'C')
-        self.ln(5)
-
-    def chapter_title(self, title):
-        self.set_font('Arial', 'B', 12)
-        self.cell(0, 8, title, 0, 1, 'L')
-        self.ln(2)
-
-    def chapter_body(self, body):
-        self.set_font('Arial', '', 10)
-        self.multi_cell(0, 5, body)
-        self.ln()
-
-# ------------------ File Upload ------------------
-st.sidebar.title("📂 Upload Data")
-uploaded_file = st.sidebar.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
+# File uploader
+uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
 
 if uploaded_file:
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+    df = pd.read_csv(uploaded_file)
+    st.success("✅ File uploaded successfully!")
+    st.write("### Preview of Data", df.head())
 
-    st.write("### Preview Data")
-    st.dataframe(df.head())
+    # Select analysis
+    analysis_options = [
+        "Summary Statistics",
+        "Correlation Heatmap",
+        "Regression Analysis",
+        "Normality Check",
+        "Custom Plot"
+    ]
+    selected_analysis = st.multiselect("Choose Analysis to Perform", analysis_options)
 
-    # ------------------ Analysis Choice ------------------
-    analysis_choice = st.sidebar.selectbox(
-        "Choose Analysis",
-        ["Summary Statistics", "Correlation Matrix", "Regression Analysis", "Normality Check"]
-    )
+    # Prepare PDF
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
 
-    pdf = PDF()
-    pdf.add_page()
+    def add_table_to_pdf(pdf, dataframe, title):
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(0, 10, title, ln=True)
+        pdf.set_font("Arial", '', 10)
+        col_width = pdf.w / (len(dataframe.columns) + 1)
+        pdf.ln(5)
 
-    if analysis_choice == "Summary Statistics":
-        st.subheader("📊 Summary Statistics")
-        summary = df.describe(include="all")
-        st.dataframe(summary)
+        # Column names
+        for col in dataframe.columns:
+            pdf.cell(col_width, 8, str(col), border=1)
+        pdf.ln()
 
-        pdf.chapter_title("Summary Statistics")
-        pdf.chapter_body(summary.to_string())
+        # Rows
+        for _, row in dataframe.iterrows():
+            for item in row:
+                pdf.cell(col_width, 8, str(round(item, 3) if isinstance(item, (int, float)) else str(item)), border=1)
+            pdf.ln()
 
-    elif analysis_choice == "Correlation Matrix":
-        st.subheader("🔗 Correlation Matrix")
-        corr = df.corr(numeric_only=True)
-        st.dataframe(corr)
+    def add_image_to_pdf(pdf, fig, title):
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(0, 10, title, ln=True)
+        tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        fig.savefig(tmpfile.name, bbox_inches="tight")
+        pdf.image(tmpfile.name, w=180)
+        plt.close(fig)
+        tmpfile.close()
+        os.unlink(tmpfile.name)
 
-        fig, ax = plt.subplots()
-        cax = ax.matshow(corr, cmap="coolwarm")
-        fig.colorbar(cax)
-        plt.xticks(range(len(corr.columns)), corr.columns, rotation=90)
-        plt.yticks(range(len(corr.columns)), corr.columns)
+    # Run analyses
+    if "Summary Statistics" in selected_analysis:
+        summary_stats = df.describe().T
+        st.write("### Summary Statistics", summary_stats)
+        add_table_to_pdf(pdf, summary_stats, "Summary Statistics")
+
+    if "Correlation Heatmap" in selected_analysis:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sns.heatmap(df.corr(), annot=True, cmap="coolwarm", ax=ax)
         st.pyplot(fig)
+        add_image_to_pdf(pdf, fig, "Correlation Heatmap")
 
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        pdf.chapter_title("Correlation Matrix")
-        pdf.chapter_body(corr.to_string())
-        pdf.image(buf, x=10, y=None, w=180)
-
-    elif analysis_choice == "Regression Analysis":
-        st.subheader("📈 Regression Analysis")
-        num_cols = df.select_dtypes(include=np.number).columns.tolist()
-
+    if "Regression Analysis" in selected_analysis:
+        num_cols = df.select_dtypes(include=['number']).columns.tolist()
         if len(num_cols) >= 2:
-            x_var = st.selectbox("Select X variable", num_cols)
-            y_var = st.selectbox("Select Y variable", num_cols)
+            x_col = st.selectbox("Select independent variable (X)", num_cols)
+            y_col = st.selectbox("Select dependent variable (Y)", num_cols)
+            if x_col and y_col:
+                X = df[[x_col]].dropna()
+                y = df[y_col].dropna()
+                model = LinearRegression()
+                model.fit(X, y)
+                slope = model.coef_[0]
+                intercept = model.intercept_
+                st.write(f"**Regression Equation:** y = {slope:.3f}x + {intercept:.3f}")
+                fig, ax = plt.subplots()
+                ax.scatter(X, y, color='blue')
+                ax.plot(X, model.predict(X), color='red')
+                ax.set_xlabel(x_col)
+                ax.set_ylabel(y_col)
+                st.pyplot(fig)
+                add_image_to_pdf(pdf, fig, f"Regression: {y_col} vs {x_col}")
 
-            X = df[[x_var]].dropna()
-            Y = df[y_var].dropna()
-            common_idx = X.index.intersection(Y.index)
-            X = X.loc[common_idx]
-            Y = Y.loc[common_idx]
-
-            model = LinearRegression()
-            model.fit(X, Y)
-            pred = model.predict(X)
-
-            st.write(f"**R² Score:** {model.score(X, Y):.4f}")
-            fig, ax = plt.subplots()
-            ax.scatter(X, Y, color="blue", label="Actual")
-            ax.plot(X, pred, color="red", label="Predicted")
-            ax.set_xlabel(x_var)
-            ax.set_ylabel(y_var)
-            ax.legend()
-            st.pyplot(fig)
-
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png")
-            pdf.chapter_title(f"Regression Analysis ({x_var} vs {y_var})")
-            pdf.chapter_body(f"R² Score: {model.score(X, Y):.4f}")
-            pdf.image(buf, x=10, y=None, w=180)
-        else:
-            st.warning("Need at least two numeric columns for regression.")
-
-    elif analysis_choice == "Normality Check":
-        st.subheader("📏 Normality Check (Shapiro-Wilk Test)")
-        col = st.selectbox("Select column", df.select_dtypes(include=np.number).columns)
+    if "Normality Check" in selected_analysis:
+        num_cols = df.select_dtypes(include=['number']).columns.tolist()
+        col = st.selectbox("Select column for normality test", num_cols)
         stat, p = stats.shapiro(df[col].dropna())
-        st.write(f"**W-statistic:** {stat:.4f}, **p-value:** {p:.4f}")
+        st.write(f"**Shapiro-Wilk Test:** W = {stat:.3f}, p = {p:.3f}")
+        interpretation = "Data looks normally distributed." if p > 0.05 else "Data does not look normally distributed."
+        st.write("📌 Interpretation:", interpretation)
+        pdf.set_font("Arial", '', 12)
+        pdf.multi_cell(0, 8, f"Normality Check ({col}):\nW = {stat:.3f}, p = {p:.3f}\nInterpretation: {interpretation}")
 
-        pdf.chapter_title(f"Normality Check: {col}")
-        pdf.chapter_body(f"W-statistic: {stat:.4f}, p-value: {p:.4f}")
+    if "Custom Plot" in selected_analysis:
+        num_cols = df.select_dtypes(include=['number']).columns.tolist()
+        x_axis = st.selectbox("X-axis", num_cols)
+        y_axis = st.selectbox("Y-axis", num_cols)
+        fig, ax = plt.subplots()
+        sns.scatterplot(data=df, x=x_axis, y=y_axis, ax=ax)
+        st.pyplot(fig)
+        add_image_to_pdf(pdf, fig, f"Custom Plot: {y_axis} vs {x_axis}")
 
-    # ------------------ Download PDF ------------------
-    pdf_output = pdf.output(dest="S").encode("latin-1")
-    st.download_button("📥 Download PDF Report", data=pdf_output, file_name="analysis_report.pdf", mime="application/pdf")
-
-else:
-    st.info("Upload a CSV or Excel file to begin.")
+    # Export PDF
+    if st.button("📄 Generate PDF Report"):
+        pdf_output = io.BytesIO()
+        pdf.output(pdf_output)
+        pdf_output.seek(0)
+        st.download_button(
+            label="Download PDF Report",
+            data=pdf_output,
+            file_name="analysis_report.pdf",
+            mime="application/pdf"
+        )
