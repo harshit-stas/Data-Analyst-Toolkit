@@ -1,7 +1,9 @@
-streamlit
-pandas
-matplotlib
-seaborn
-scipy
-scikit-learn
-fpdf
+streamlit==1.48.0
+pandas==2.3.1
+numpy==2.3.2
+matplotlib==3.10.5
+seaborn==0.13.2
+scipy==1.16.1
+statsmodels==0.14.5
+reportlab==4.4.3
+openpyxl==3.1.2
