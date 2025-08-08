@@ -2,48 +2,65 @@ import streamlit as st
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-import io
 import numpy as np
 from scipy import stats
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
+# ----------------- Streamlit Page Config -----------------
 st.set_page_config(page_title="Smart Data Analyst Toolkit", layout="wide")
+sns.set_theme(style="whitegrid")
 
 st.title("📊 Smart Data Analyst Toolkit")
-st.markdown("Upload a CSV file and get instant insights, colorful charts, smart recommendations, and statistical analysis.")
+st.markdown("Upload a CSV file and get **instant insights**, **colorful charts**, and **smart statistical recommendations**.")
+
+# ----------------- File Upload & Cache -----------------
+@st.cache_data
+def load_csv(file):
+    return pd.read_csv(file)
 
 uploaded_file = st.file_uploader("📂 Upload CSV File", type="csv")
 
 if uploaded_file:
     try:
-        df = pd.read_csv(uploaded_file)
+        df = load_csv(uploaded_file)
     except Exception as e:
-        st.error(f"Error reading the file: {e}")
+        st.error(f"❌ Error reading the file: {e}")
         st.stop()
 
-    st.success("✅ File uploaded and read successfully.")
+    st.success("✅ File uploaded successfully.")
     st.subheader("🔍 Preview of Your Data")
     st.dataframe(df.head())
 
+    # Identify column types
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
 
-    st.sidebar.header("Choose Your Analysis")
-    analysis_type = st.sidebar.selectbox("Select Analysis Type", [
-        "Exploratory Data Analysis",
-        "Compare Means",
-        "Association Between Categories",
-        "Correlation",
-        "Regression",
-        "Check Normality",
-        "Compare Variances"
-    ])
+    # Handle no numeric or categorical data edge case
+    if not numeric_cols:
+        st.warning("⚠️ No numeric columns detected. Some analyses will be unavailable.")
+    if not categorical_cols:
+        st.warning("⚠️ No categorical columns detected. Some analyses will be unavailable.")
 
-    # --- EDA & Business Intelligence ---
+    # Sidebar
+    st.sidebar.header("Choose Your Analysis")
+    analysis_type = st.sidebar.selectbox(
+        "Select Analysis Type",
+        [
+            "Exploratory Data Analysis",
+            "Compare Means" if numeric_cols and categorical_cols else None,
+            "Association Between Categories" if len(categorical_cols) >= 2 else None,
+            "Correlation" if len(numeric_cols) >= 2 else None,
+            "Regression" if len(numeric_cols) >= 2 else None,
+            "Check Normality" if numeric_cols else None,
+            "Compare Variances" if numeric_cols and categorical_cols else None
+        ]
+    )
+
+    # ----------------- EDA -----------------
     if analysis_type == "Exploratory Data Analysis":
         st.subheader("📈 Exploratory Data Analysis")
-        st.write("Summary statistics and smart suggestions")
+        st.write("Summary statistics and smart suggestions.")
 
         st.markdown("### 📌 Summary")
         st.write(df.describe(include='all').transpose())
@@ -54,26 +71,31 @@ if uploaded_file:
         else:
             st.info("✅ No missing values detected.")
 
+        if len(df) < 50:
+            st.info("ℹ️ Dataset is small — be careful with statistical assumptions.")
+
         st.markdown("### 🎨 Visualizations")
+        with st.expander("Numeric Distributions"):
+            for col in numeric_cols:
+                fig, ax = plt.subplots()
+                sns.histplot(df[col].dropna(), kde=True, palette="husl", ax=ax)
+                ax.set_title(f"Distribution of {col}")
+                st.pyplot(fig)
 
-        for col in numeric_cols:
-            fig, ax = plt.subplots()
-            sns.histplot(df[col].dropna(), kde=True, color='skyblue', ax=ax)
-            ax.set_title(f"Distribution of {col}")
-            st.pyplot(fig)
-
-        for col in categorical_cols:
-            fig, ax = plt.subplots()
-            sns.countplot(y=col, data=df, palette='Set3', order=df[col].value_counts().index, ax=ax)
-            ax.set_title(f"Frequency of {col}")
-            st.pyplot(fig)
+        with st.expander("Categorical Distributions"):
+            for col in categorical_cols:
+                fig, ax = plt.subplots()
+                sns.countplot(y=col, data=df, palette="Set3", order=df[col].value_counts().index, ax=ax)
+                ax.set_title(f"Frequency of {col}")
+                st.pyplot(fig)
 
         st.markdown("### 💡 Recommendations")
         if len(numeric_cols) >= 2:
-            st.write("You can explore relationships between numeric variables using correlation or regression.")
+            st.write("🔹 Explore correlations between numeric variables.")
         if len(categorical_cols) >= 2:
-            st.write("Consider Chi-square test for association between categorical variables.")
+            st.write("🔹 Use Chi-square test to check relationships between categories.")
 
+    # ----------------- Compare Means -----------------
     elif analysis_type == "Compare Means":
         st.subheader("🧪 Compare Means")
         target = st.sidebar.selectbox("Choose numeric variable", numeric_cols)
@@ -100,6 +122,7 @@ if uploaded_file:
             sns.boxplot(x=group, y=target, data=df, palette="pastel", ax=ax)
             st.pyplot(fig)
 
+    # ----------------- Association Between Categories -----------------
     elif analysis_type == "Association Between Categories":
         st.subheader("🧩 Chi-square Test")
         cat1 = st.sidebar.selectbox("First categorical variable", categorical_cols)
@@ -111,7 +134,12 @@ if uploaded_file:
             st.write(contingency)
             chi2, p, dof, _ = stats.chi2_contingency(contingency)
             st.write(f"**Chi-square statistic**: {chi2:.3f}, **p-value**: {p:.3f}")
+            if p < 0.05:
+                st.success("✅ Significant association detected.")
+            else:
+                st.info("ℹ️ No significant association detected.")
 
+    # ----------------- Correlation -----------------
     elif analysis_type == "Correlation":
         st.subheader("📉 Correlation")
         x = st.sidebar.selectbox("Variable 1", numeric_cols)
@@ -120,10 +148,13 @@ if uploaded_file:
         if x and y:
             r, p = stats.pearsonr(df[x], df[y])
             st.write(f"**Pearson correlation coefficient**: {r:.3f}, **p-value**: {p:.3f}")
+            if abs(r) > 0.7:
+                st.success("Strong correlation detected — possible predictive relationship.")
             fig, ax = plt.subplots()
-            sns.scatterplot(x=x, y=y, data=df, hue=df[categorical_cols[0]] if categorical_cols else None, ax=ax)
+            sns.scatterplot(x=x, y=y, data=df, hue=df[categorical_cols[0]] if categorical_cols else None, palette="coolwarm", ax=ax)
             st.pyplot(fig)
 
+    # ----------------- Regression -----------------
     elif analysis_type == "Regression":
         st.subheader("📈 Linear Regression")
         y = st.sidebar.selectbox("Dependent Variable", numeric_cols)
@@ -136,16 +167,22 @@ if uploaded_file:
             sns.regplot(x=x, y=y, data=df, color="tomato", ax=ax)
             st.pyplot(fig)
 
+    # ----------------- Normality Check -----------------
     elif analysis_type == "Check Normality":
         st.subheader("📊 Normality Check (Shapiro-Wilk Test)")
         col = st.sidebar.selectbox("Numeric Column", numeric_cols)
         if col:
             stat, p = stats.shapiro(df[col].dropna())
             st.write(f"**W-statistic**: {stat:.3f}, **p-value**: {p:.3f}")
+            if p < 0.05:
+                st.warning("Data is not normally distributed — consider non-parametric tests.")
+            else:
+                st.success("Data is normally distributed.")
             fig, ax = plt.subplots()
-            sns.histplot(df[col].dropna(), kde=True, ax=ax)
+            sns.histplot(df[col].dropna(), kde=True, palette="husl", ax=ax)
             st.pyplot(fig)
 
+    # ----------------- Compare Variances -----------------
     elif analysis_type == "Compare Variances":
         st.subheader("📏 Compare Variances (Levene's Test)")
         target = st.sidebar.selectbox("Numeric Variable", numeric_cols)
@@ -158,8 +195,12 @@ if uploaded_file:
                 g2 = df[df[group] == unique_groups[1]][target].dropna()
                 stat, p = stats.levene(g1, g2)
                 st.write(f"**Levene's statistic**: {stat:.3f}, **p-value**: {p:.3f}")
+                if p < 0.05:
+                    st.warning("Variances are significantly different.")
+                else:
+                    st.success("Variances are similar.")
                 fig, ax = plt.subplots()
-                sns.boxplot(x=group, y=target, data=df, ax=ax)
+                sns.boxplot(x=group, y=target, data=df, palette="pastel", ax=ax)
                 st.pyplot(fig)
 
 else:
